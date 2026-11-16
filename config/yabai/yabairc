@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+# yabai startup config.
+#
+# Until 2026-06-08 there was NO yabairc: yabai launched bare (launchd:
+# com.asmvik.yabai) on its COMPILED defaults, and the working runtime state
+# (layout float, the slot/CAD signals, the loaded scripting addition) was added
+# imperatively in interactive sessions. None of it survived a reboot — yabai's
+# compiled default layout is `bsp`, which would tile and break the slots system,
+# and the scripting addition was simply never loaded at boot, which is why slot
+# restores popped their windows in one at a time. This file formalises that
+# state so it is reproduced on every start.
+export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/Users/josh/bin:$PATH"
+
+# ── Scripting addition ─────────────────────────────────────────────────────────
+# The SA gives yabai synchronous, window-server-level z-ordering, so
+# `yabai window --focus` raises a whole group atomically instead of each app
+# raising itself on its own clock. scene_restore checks the sentinel below to
+# take its fast (SA) path.
+#
+# SIP REQUIREMENT — CHANGED ON APPLE SILICON (2026-08-17 migration):
+#   On the old Intel Mac this needed only `csrutil enable --without fs`. This
+#   machine is an M1 Pro, where the SA additionally requires the arm64e preview ABI
+#   boot-arg on top of a wider SIP relaxation. BOTH HALVES ARE NOW DONE:
+#       recoveryOS:      csrutil enable --without fs --without debug --without nvram   [done]
+#       booted normally: sudo nvram boot-args=-arm64e_preview_abi                      [done]
+#   Verify with `csrutil status` (custom configuration) and `sysctl kern.bootargs`
+#   (must list -arm64e_preview_abi — nvram alone is not enough, it needs the reboot).
+#   See bin/README.md "yabai scripting addition".
+#
+# THE SENTINEL IS NOT THE SAME QUESTION AS `--load-sa`'s EXIT CODE (2026-09-03):
+#   Everything SA-backed is gated on /tmp/.yabai_sa_loaded — slotlib.sh's
+#   pin_loose_above() and unstick_sublayers(), and the whole of
+#   slots/window_event.sh, all `return 0` the moment that file is missing. So a
+#   wrong sentinel disables the shadow strip, the floater `above` tiering and the
+#   hand-snap reconcile at once, and NOTHING logs it: the only visible symptom is
+#   drop shadows on snapped windows.
+#   `sudo -n yabai --load-sa` is not a trustworthy source for that verdict — it can
+#   exit 1, with no message on stdout OR stderr, while the SA is loaded and fully
+#   working (most obviously when the payload is already injected into a
+#   still-running Dock and the loader has nothing left to do). Writing the sentinel
+#   off that exit code is what produced the shadows-came-back bug.
+#   yabai_sa_probe.sh therefore decides it by PROVING the SA — it re-asserts a
+#   window's current `--sub-layer` (an SA-only op, and a no-op at the same value)
+#   and reads yabai's exit code. The inline load below stays as a first attempt, but
+#   the probe in the delayed block at the bottom of this file has the last word.
+#   Debugging this again? Don't infer from --load-sa; run:
+#       yabai -m window <id> --sub-layer normal   # exit 0, silent  => SA is live
+#
+# Passwordless sudo for --load-sa lives in /etc/sudoers.d/yabai-load-sa. That file
+# did NOT survive migration (/etc is not migrated), so it is recreated by
+# bin/install_sudoers.sh (done 2026-08-17; the rule is in place on this machine).
+# Resolve yabai's path rather than hardcoding it: the Homebrew prefix moved from
+# /usr/local (Intel) to /opt/homebrew (native arm64), and the rule grants both.
+YABAI_BIN="$(command -v yabai)"
+# The `&&` chain this used to be (`--load-sa && touch && pin`) meant a loader that
+# exited non-zero ALSO skipped the pin, so a Dock restart could leave shadows on
+# every snapped tile. yabai_sa_probe.sh does the load, proves the SA with an
+# SA-only operation and writes the sentinel from THAT; pin then runs unconditionally
+# (it self-gates on the sentinel).
+yabai -m signal --add event=dock_did_restart \
+  action="/Users/josh/Code/Scripts/yabai_sa_probe.sh >/dev/null 2>&1; /Users/josh/Code/Scripts/slots/slotlib.sh pin >/dev/null 2>&1"
+# -n: never block on a password prompt. Without it a missing sudoers rule makes
+# yabai's startup hang invisibly instead of falling back.
+#
+# The exit status is deliberately DISCARDED. This used to be
+# `if sudo -n ... --load-sa; then touch sentinel; else rm -f sentinel; fi`, and the
+# `else` was the bug: the loader exits 1, silently, in cases where the SA is loaded
+# and working, so a perfectly good SA got recorded as absent and every SA-gated
+# behaviour died. We clear the sentinel to the conservative value instead (a stale
+# one from a previous boot may well be wrong — /tmp is not emptied at every boot)
+# and let the delayed probe at the bottom of this file establish the truth. Any slot
+# op landing in that gap heals it on the spot via slotlib's sa_ready().
+rm -f /tmp/.yabai_sa_loaded
+sudo -n "$YABAI_BIN" --load-sa >/dev/null 2>&1 || true
+
+# ── Layout ─────────────────────────────────────────────────────────────────────
+# float: yabai positions NOTHING itself. The slots system owns all geometry via
+# AX. This MUST be set — the compiled default (bsp) would tile every window.
+yabai -m config layout float
+
+# ── Fusion Params editor ───────────────────────────────────────────────────────
+# Keep the FusionParams floating editor a persistent floater: unmanaged (slots
+# never tiles it), shown only where Fusion is (slotlib pin_loose_above), and composited above so it doesn't
+# vanish behind Fusion when the viewport is clicked. We do this here (not via a
+# native .floating window level) because that level broke three-finger dragging.
+yabai -m rule --add app="^FusionParams$" manage=off sub-layer=above   # not sticky: it rides with Fusion's slot (config/fusion_companions)
+
+# ── Floater apps open on top ───────────────────────────────────────────────────
+# Finder and File Explorer windows are floaters (slots/MODEL.md): a NEW one must
+# open in front of the other floaters (all on `above`), not under them until
+# pin_loose_above / coherence_home lift it — that read as a flash behind, then in
+# front. yabai applies this rule on its window-created notification, which lands
+# before the window's first visible frame (measured 2026-10-11: a new Finder window
+# was never once seen behind File Explorer; without it, behind until the next
+# reconcile). A snapped window is still pulled back to `normal` by pin_loose_above.
+# Control Room sets its own sub-level before it shows (RemapApp floatAbove).
+yabai -m rule --add app="^(Finder|File Explorer)$" sub-layer=above
+
+# ── Screen frame ───────────────────────────────────────────────────────────────
+# 2px black line round every display, above everything (bin/screen_frame.m). It
+# sits at a non-zero window level, so win_list/slots never see it; yabai is told
+# to leave it alone. Singleton: a yabai restart replaces, never stacks.
+yabai -m rule --add app="^screen_frame$" manage=off
+pkill -x screen_frame 2>/dev/null
+/Users/josh/Code/Scripts/bin/build.sh --if-stale screen_frame >/dev/null 2>&1 || true
+/Users/josh/bin/screen_frame >/dev/null 2>&1 &
+
+# The Browser's suspend-mode edge glow round Fusion (bin/fusion_glow.m) — same idea:
+# floating level, click-through, started and stopped by the Browser add-in.
+yabai -m rule --add app="^fusion_glow$" manage=off
+# The busy spinner beside the pointer (bin/fusion_busy.m, launchd) — same again.
+yabai -m rule --add app="^fusion_busy$" manage=off
+
+# ── Window chrome ──────────────────────────────────────────────────────────────
+# Drop shadow: keep the global ON so every window composites WITH its native
+# WindowServer shadow at creation — instantly and fully rendered. pin_loose_above
+# then STRIPS the shadow from snapped tiles only (slotlib.sh), leaving floaters'
+# shadow untouched. This polarity matters: mutating a window's shadow via SkyLight
+# after it is composited doesn't recompute until the frame changes (the shadow
+# renders late / half, fixed only by dragging), so we must never toggle the windows
+# whose shadow is actually visible — the floaters. The toggle lands on snapped
+# tiles instead, whose shadows are occluded by neighbours and the screen edge.
+#
+# This global `on` is applied to EVERY existing window at yabai startup, undoing
+# all previous per-window strips — which is why snapped windows used to regain
+# their shadows on every yabai restart until a slot op happened to run
+# pin_loose_above again. The delayed `slotlib.sh pin` at the bottom of this file
+# re-strips them across all spaces right after startup.
+yabai -m config window_shadow on
+
+# yabai's own window_border was removed in v4, so the edge line comes from
+# JankyBorders (FelixKratz/formulae/borders) — separate process, no SA/SIP needed,
+# it draws its own overlay windows. 1px black on EVERY window (active == inactive):
+# a focus-only border flashes off during the focus handoff, so we draw all edges
+# permanently and let focus changes be no-ops. Singleton-guarded so a yabai restart
+# doesn't stack a second copy.
+# ax_focus=on: resolve focus via the accessibility API instead of the WindowServer
+# front-window notification, so the border doesn't flash off while yabai re-orders
+# the window on focus change. Needs Accessibility trust — inherited here because
+# borders is a child of yabai, which has it.
+pkill -x borders 2>/dev/null
+# Resolved via PATH (exported at the top) — the Homebrew prefix is /opt/homebrew
+# on Apple Silicon, not /usr/local.
+#
+# WHO GETS A LINE — a WHITELIST, kept in sync by slotlib (2026-09-21).
+# It used to be a blacklist only, which is default-ALLOW: every app on the machine
+# got a border unless someone had remembered to name it. That is the wrong default
+# here, because the line is only ever wanted on SNAPPED windows — a floater keeps
+# its drop shadow (pin_loose_above), so the border adds nothing and reads as an
+# outline round a panel. Everything nobody had thought to name got one anyway:
+# ExpressVPN, preference panels, updaters, anything new.
+#   `borders_sync` in slots/slotlib.sh now pushes `whitelist=` on every op, built
+#   from the apps the slot model has recorded at a TILE position (plus their
+#   alternate window-owner spellings), minus config/borders_exclude. Anything else
+#   — including every floater — is outside the whitelist and gets no border, with
+#   no list to maintain.
+# The blacklist below stays as the floor: it is what must NEVER get a line even if
+# the whitelist is empty or stale, and a launch-time value means that holds from
+# the first frame, before any slot op has run. Both lists come from the same file,
+# and borders_sync subtracts it from the whitelist, so no app is ever in both.
+BORDERS_EXCLUDE=$(sed 's/#.*//' /Users/josh/Code/Scripts/config/borders_exclude \
+                  | sed '/^[[:space:]]*$/d' | paste -sd, -)
+#
+# 1px on EVERY window (active == inactive): a focus-only border flashes off during
+# the focus handoff, so we draw all edges permanently and let focus changes be
+# no-ops. ax_focus=on: resolve focus via the accessibility API instead of the
+# WindowServer front-window notification, so the border doesn't flash off while
+# yabai re-orders the window on focus change. Needs Accessibility trust — inherited
+# here because borders is a child of yabai, which has it.
+# Not while slots is switched off (slots/power.sh) — the line is a slots thing.
+[[ -f /Users/josh/Code/Scripts/config/slots_off ]] || \
+borders active_color=0xffdfdfdf inactive_color=0xffdfdfdf \
+  width=2.0 style=round ax_focus=on \
+  blacklist="$BORDERS_EXCLUDE" >/dev/null 2>&1 &
+# The whitelist can only be computed once slotlib can read its state, and pushing it
+# at a borders that isn't up yet would SPAWN a second one (see borders_theme.sh) —
+# so it is left to the delayed `slotlib.sh pin` at the bottom of this file, and to
+# every op after that.
+# Line colour follows the macOS appearance: black in Dark mode, the grey above in
+# Light. borders_theme.sh launches the borders-theme watcher, which reads the EFFECTIVE
+# appearance from AppKit (correct under Auto, which `defaults read -g
+# AppleInterfaceStyle` is not) and pushes the colour the moment it changes; the launch
+# colour above is just the initial value it corrects immediately on start.
+/Users/josh/Code/Scripts/borders_theme.sh >/dev/null 2>&1 &
+
+# Display contrast (via BetterDisplay's Shortcuts action, not Accessibility's own
+# slider — that has no live-apply path) follows the same appearance change.
+# contrast_theme.sh launches the contrast-theme watcher — same DistributedNotificationCenter
+# approach as borders-theme, see contrast_theme/main.swift.
+/Users/josh/Code/Scripts/contrast_theme.sh >/dev/null 2>&1 &
+
+# ── Slots / CAD signals (were runtime-only before this file existed) ───────────
+yabai -m signal --add event=application_launched \
+  action='/Users/josh/Code/Scripts/yabai_cache_debounced.sh'
+yabai -m signal --add event=application_terminated \
+  action='/Users/josh/Code/Scripts/yabai_cache_debounced.sh'
+# Slot-side reaction to an app quitting by ANY means (Dock quit, ⌘Q, crash): prune
+# the dead app from every slot and destroy a space the quit left as a bare
+# full-screen shell. See slots/app_terminated.sh.
+yabai -m signal --add event=application_terminated \
+  action='/Users/josh/Code/Scripts/slots/app_terminated.sh'
+# On a Fusion quit, pull any in-install edits back into the carryover backup
+# snapshot so the next update preserves them (capture.sh, gated on hash match).
+yabai -m signal --add event=application_terminated app="^(Autodesk )?Fusion$" \
+  action='/Users/josh/code/fusion-carryover/on_fusion_quit.sh'
+# A Windows dialog (Arnold RenderView, a nag) opens on whatever Mac Space is active;
+# send it back to its Coherence app's Space at once. See max/coherence_home.py.
+yabai -m signal --add event=window_created app="^(3ds Max 2027|Windows 11)$" \
+  action='/Users/josh/Code/Scripts/max/coherence_home.py >/dev/null 2>&1 &'
+yabai -m signal --add event=application_activated app="^SketchUp" \
+  action='/Users/josh/Code/Scripts/sketchup_activated.sh'
+yabai -m signal --add event=application_activated app="^(Autodesk )?Fusion$" \
+  action='/Users/josh/Code/Scripts/fusion_activated.sh'
+# Fusion is a Qt app whose canvas window races yabai's AX observer at creation, so
+# yabai sometimes never attaches to it (has-ax-reference=false) and can't move it to
+# the `below` sub-layer — breaking the atomic slot reveal (Fusion can't be lowered
+# behind a revealed split). On Fusion launch, re-observe it if needed (one-time
+# yabai restart, loop-guarded; no-op when already observed). Trailing `&` orphans the
+# script to launchd so it survives the restart it may trigger. See
+# fusion_observe_heal.sh.
+yabai -m signal --add event=application_launched app="^(Autodesk )?Fusion$" \
+  action='/usr/bin/nohup /Users/josh/Code/Scripts/fusion_observe_heal.sh >/dev/null 2>&1 &'
+# Photoshop's title bar is NOT pushed above the screen any more (titlebar_hide.sh —
+# Photoshop dragged it back on every activation, so it flashed for seconds). It runs
+# in View ▸ Screen Mode ▸ Full Screen Mode With Menu Bar instead: no title bar, tabs
+# or status bar. An app that needs the push again: a `titlebar` setting + these
+# window_moved/window_resized signals → slots/titlebar_hide.sh.
+yabai -m signal --add event=application_deactivated app="^SketchUp" \
+  action='/Users/josh/Code/Scripts/cad_deactivated.sh'
+yabai -m signal --add event=application_deactivated app="^(Autodesk )?Fusion$" \
+  action='/Users/josh/Code/Scripts/cad_deactivated.sh'
+yabai -m signal --add event=space_changed \
+  action='/Users/josh/Code/Scripts/space_changed_handler.sh'
+# Native-spaces slots (config/slots_spaces): follow a desktop switch macOS made on
+# its own (Dock, ⌘-Tab, Mission Control). No-op in single-space mode.
+yabai -m signal --add event=space_changed \
+  action='/Users/josh/Code/Scripts/slots/space_event.sh'
+
+# ── Display changes invalidate the cached screen size ──────────────────────────
+# slotlib's screen_dims caches "w h" in /tmp/screen_dims and never re-reads the
+# display afterwards (it's on the hot path of every snap/reconcile). Plugging in,
+# unplugging or rearranging a monitor therefore left the slots sizing every tile
+# against the OLD screen — snapped windows came out the wrong size, and a window
+# genuinely filling the new screen no longer matched `full`, so it was recorded
+# as a literal-geometry floater. Dropping the file here makes the next slot op
+# re-probe. Cheap: one rm, and the re-probe is a single yabai query.
+# display_event.sh also holds reconciles off while macOS shuffles windows between
+# screens, then re-reveals the current slot once things settle.
+for _ev in display_added display_removed display_changed display_resized; do
+  yabai -m signal --add event="$_ev" action='/Users/josh/Code/Scripts/slots/display_event.sh'
+done
+# UI Zoom's display scaling: a monitor plugged back in comes up at whatever mode macOS
+# remembered, and unplugged, the laptop screen needs the whole level again — `apply`
+# re-sizes both sides (ui_zoom.sh § Display scaling). The sleep lets BetterDisplay
+# see the new display.
+for _ev in display_added display_removed; do
+  yabai -m signal --add event="$_ev" label="ui_zoom_$_ev" \
+    action='(sleep 2; /Users/josh/Code/Scripts/ui_zoom.sh apply) >/dev/null 2>&1 &'
+done
+# Kindle's real page zoom is checked here too (ui_zoom.sh § kindle_zoom). Skipped if a
+# press holds the lock, or if that check is what activated Safari.
+yabai -m signal --add event=application_activated app="^Safari$" label=ui_zoom_safari \
+  action='lockf -k -t 0 /tmp/.ui_zoom_menus.lock /Users/josh/Code/Scripts/ui_zoom.sh _kindle >/dev/null 2>&1 &'
+
+# A click (or ⌘-Tab / Dock) onto a window a reveal parked on the `below` sub-layer:
+# lift it to the front, or — if it fills the screen and has a full-screen space —
+# switch to that space as if its hotkey had been pressed. See slots/app_focused.sh.
+yabai -m signal --add event=application_activated \
+  action='/Users/josh/Code/Scripts/slots/app_focused.sh'
+yabai -m signal --add event=window_focused \
+  action='/Users/josh/Code/Scripts/slots/app_focused.sh'
+
+# Live reconcile when a window is moved/resized by hand: unsnapping a window makes
+# it a sticky floater, hand-snapping it makes it a non-sticky tile. Debounced and
+# guarded so it never fights the slot scripts' own window moves.
+yabai -m signal --add event=window_moved \
+  action='/Users/josh/Code/Scripts/slots/window_event.sh'
+yabai -m signal --add event=window_resized \
+  action='/Users/josh/Code/Scripts/slots/window_event.sh'
+
+# If Fusion is ALREADY running when yabai (re)starts, no application_launched fires,
+# so heal its window observation now too. Orphaned to launchd (trailing &) and loop-
+# guarded inside the script, so the restart it may trigger can't recurse.
+/usr/bin/nohup /Users/josh/Code/Scripts/fusion_observe_heal.sh >/dev/null 2>&1 &
+
+# ── Startup shadow/sub-layer re-assert ─────────────────────────────────────────
+# `window_shadow on` above just re-shadowed every window on every space, and the
+# fresh yabai has all sub-layers at normal. Re-run the pin (strip shadows from
+# snapped tiles, floaters to `above`) across ALL spaces once yabai finishes
+# starting. Delayed + orphaned: yabairc runs BEFORE yabai's event loop serves
+# queries, so a synchronous `yabai -m query` here would hang; a few seconds later
+# it answers fine. This replaces the old ritual of summoning a floater after
+# every restart to trigger pin_loose_above by hand.
+#
+# The probe runs FIRST and is what actually decides the sentinel: the inline
+# `--load-sa` above reports failure in cases where the SA is loaded and working
+# (notably when the payload is already injected into a still-running Dock), and its
+# `rm -f` then silently disables pin_loose_above, unstick_sublayers and
+# window_event.sh. See yabai_sa_probe.sh.
+/usr/bin/nohup /bin/bash -c \
+  'sleep 4; /Users/josh/Code/Scripts/yabai_sa_probe.sh >/dev/null 2>&1; /Users/josh/Code/Scripts/slots/slotlib.sh pin' >/dev/null 2>&1 &

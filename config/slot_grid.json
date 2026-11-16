@@ -1,0 +1,67 @@
+{
+  "_doc": "The slots grid (Control Room ▸ Slots ▸ Grid; slots/grid.py has the rules). Each cell is a fixed space at row/col of a 3×3 grid; a position with several apps holds alternatives, first = priority, Toggle flips them.",
+  "arm_hops": true,
+  "home": "g1",
+  "cells": [
+    {
+      "id": "g1",
+      "row": 1,
+      "col": 1,
+      "layout": "split",
+      "left": [
+        "Claude"
+      ],
+      "right": [
+        "Safari",
+        "Google Chrome"
+      ],
+      "full": []
+    },
+    {
+      "id": "g2",
+      "row": 0,
+      "col": 1,
+      "layout": "full",
+      "left": [],
+      "right": [],
+      "full": [
+        "Notes"
+      ]
+    },
+    {
+      "id": "g3",
+      "row": 1,
+      "col": 2,
+      "layout": "full",
+      "left": [],
+      "right": [],
+      "full": [
+        "Photoshop"
+      ]
+    },
+    {
+      "id": "g4",
+      "row": 2,
+      "col": 1,
+      "layout": "full",
+      "left": [],
+      "right": [],
+      "full": [
+        "Remap",
+        "Backtrack"
+      ]
+    },
+    {
+      "id": "g5",
+      "row": 1,
+      "col": 0,
+      "layout": "full",
+      "left": [],
+      "right": [],
+      "full": [
+        "Fusion",
+        "3ds Max 2027"
+      ]
+    }
+  ]
+}

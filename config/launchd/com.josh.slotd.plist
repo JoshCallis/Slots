@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.josh.slotd</string>
+
+    <!-- The resident slot engine (slots/slotd.py). Installed/removed by
+         slots/slotd.sh on|off, which also sets config/slots_daemon — the flag the
+         entry scripts check before asking it. With the daemon down every op falls
+         back to slots/slotlib.sh, so KeepAlive is for speed, not correctness. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>-S</string>
+        <string>/Users/josh/Code/Scripts/slots/slotd.py</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/slotd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/slotd.log</string>
+</dict>
+</plist>

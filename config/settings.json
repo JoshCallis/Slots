@@ -1,0 +1,179 @@
+{
+  "_doc": "Central user settings for the slots/CAD system. THE file a settings GUI edits. Schema + defaults: see config/gen_settings.py. Shell consumers pick changes up on the next slot op (via config/load_settings.sh); cadbars reads this at launch (restart it after editing CAD bar heights: pkill -x cadbars).",
+  "aux_trackpad": "288230378130424508",
+  "apps": [
+    {
+      "key": "Podcasts",
+      "canonical": true
+    },
+    {
+      "key": "Notes",
+      "canonical": true
+    },
+    {
+      "key": "SketchUp",
+      "canonical": true,
+      "cad": {
+        "top_bar": 29,
+        "bottom_bar": 29
+      }
+    },
+    {
+      "key": "Fusion",
+      "canonical": true,
+      "open": "Autodesk Fusion",
+      "activate": "Autodesk Fusion",
+      "cad": {
+        "top_bar": 63,
+        "bottom_bar": 52
+      }
+    },
+    {
+      "key": "Parallels Desktop",
+      "canonical": true,
+      "aliases": [
+        "windows",
+        "parallels"
+      ],
+      "alt_names": [
+        "prl_client_app"
+      ],
+      "special": "parallels"
+    },
+    {
+      "key": "3ds Max 2027",
+      "aliases": [
+        "max",
+        "3dsmax"
+      ],
+      "special": "coherence"
+    },
+    {
+      "key": "Claude",
+      "canonical": true
+    },
+    {
+      "key": "OrcaSlicer",
+      "canonical": true
+    },
+    {
+      "key": "Photoshop",
+      "canonical": true,
+      "open": "Adobe Photoshop 2025",
+      "activate": "Adobe Photoshop 2025",
+      "aliases": [
+        "ps"
+      ]
+    },
+    {
+      "key": "Safari",
+      "canonical": true
+    },
+    {
+      "key": "Google Chrome",
+      "canonical": true,
+      "aliases": [
+        "chrome"
+      ]
+    },
+    {
+      "key": "Kindle",
+      "open": "Amazon Kindle",
+      "alt_names": [
+        "Amazon Kindle"
+      ]
+    },
+    {
+      "key": "Finder",
+      "special": "finder"
+    },
+    {
+      "key": "File Explorer",
+      "aliases": [
+        "explorer",
+        "winexplorer"
+      ],
+      "special": "explorer"
+    },
+    {
+      "key": "BetterTouchTool",
+      "aliases": [
+        "btt"
+      ],
+      "special": "btt"
+    },
+    {
+      "key": "Karabiner-Elements",
+      "aliases": [
+        "karabiner"
+      ]
+    },
+    {
+      "key": "Terminal"
+    },
+    {
+      "key": "TextEdit"
+    },
+    {
+      "key": "Remap",
+      "label": "Control Room",
+      "aliases": [
+        "control room",
+        "cr"
+      ],
+      "special": "controlroom"
+    },
+    {
+      "key": "Backtrack",
+      "aliases": [
+        "backing tracks",
+        "mixer"
+      ]
+    }
+  ],
+  "place_layouts": [
+    {
+      "primary": "Safari",
+      "members": [
+        {
+          "app": "Safari",
+          "pos": "right"
+        },
+        {
+          "app": "Claude",
+          "pos": "left"
+        }
+      ]
+    },
+    {
+      "primary": "Google Chrome",
+      "members": [
+        {
+          "app": "Google Chrome",
+          "pos": "right"
+        },
+        {
+          "app": "Claude",
+          "pos": "left"
+        }
+      ]
+    },
+    {
+      "primary": "Claude",
+      "members": [
+        {
+          "app": "Claude",
+          "pos": "left"
+        },
+        {
+          "app": "Safari",
+          "pos": "right"
+        },
+        {
+          "app": "Google Chrome",
+          "pos": "right"
+        }
+      ]
+    }
+  ]
+}

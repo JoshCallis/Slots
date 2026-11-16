@@ -1,0 +1,57 @@
+#!/bin/bash
+# slot_yabai_focus --resolve pid:tx [pid:tx ...]   → print matched window ids
+# slot_yabai_focus pid:tx [pid:tx ...]             → resolve AND focus them
+#
+# Raise each listed window to the front via yabai, in order, so the LAST ends up
+# key/focused. Matching is by owning pid (exact app) and, when an app owns
+# several windows, the one whose frame x-origin is closest to the target tx.
+#
+# scene_restore splits this in two: it calls `--resolve` BEFORE freezing the
+# display (the yabai query + python parse is the slow, variable-latency part, so
+# it must not count against the ~1s freeze watchdog), then issues the cheap
+# `yabai -m window <id> --focus` calls itself WHILE frozen. The combined form is
+# kept for standalone/manual use. yabai (scripting addition loaded) reorders
+# reliably even against a slow full-screen app.
+export PATH="/usr/local/bin:/opt/homebrew/bin:/Users/josh/bin:$PATH"
+command -v yabai >/dev/null 2>&1 || exit 0
+
+resolve_only=0
+if [[ "$1" == "--resolve" ]]; then resolve_only=1; shift; fi
+[[ $# -eq 0 ]] && exit 0
+
+ids=$(yabai -m query --windows --space 2>/dev/null | /usr/bin/python3 -c '
+import sys, json
+wins = json.load(sys.stdin)
+used = set(); out = []
+for tok in sys.argv[1].split():
+    pid, tx = tok.split(":"); pid = int(pid); tx = int(tx)
+    # NOTE: do NOT filter on is-visible. The query is already scoped to the current
+    # space (--space) and minimized windows are excluded below, so is-visible=False
+    # here means only "currently OCCLUDED" — which is exactly the state of a window
+    # we are about to REVEAL (it sits behind the covers scene_restore will lower).
+    # Requiring is-visible rejected the reveal target itself: a buried Fusion canvas
+    # resolved to nothing, so scene_restore lowered no covers and Fusion stayed
+    # stuck behind Claude/Chrome on swipe-to-Fusion. Match on pid + not-minimized.
+    cand = [w for w in wins
+            if w.get("pid") == pid and w["id"] not in used
+            and not w.get("is-minimized")]
+    cand.sort(key=lambda w: abs(int(w["frame"]["x"]) - tx))
+    if cand:
+        used.add(cand[0]["id"]); out.append(str(cand[0]["id"]))
+    else:
+        # Emit a placeholder so the output stays POSITIONALLY aligned with the
+        # input tokens. scene_restore zips this list against its parallel isFloat
+        # array; dropping an unresolved pid silently would shift every later flag
+        # so a snapped member could inherit a floater'"'"'s `--sub-layer above` and
+        # bury the rest of the scene behind it. Consumers skip "-".
+        out.append("-")
+print(" ".join(out))' "$*" 2>/dev/null)
+
+if [[ "$resolve_only" == 1 ]]; then
+  echo "$ids"
+  exit 0
+fi
+for id in $ids; do
+  [[ "$id" == "-" ]] && continue   # unresolved pid placeholder
+  yabai -m window "$id" --focus 2>/dev/null
+done
