@@ -53,4 +53,4 @@ Start with **[slots/MODEL.md](slots/MODEL.md)** for how it behaves, and **[ARCHI
 
 ## Notes
 
-This is a working snapshot of a personal setup, not a packaged product. It needs yabai with its scripting addition, Accessibility permission for the helpers, and paths from the system it was built in. Keys and gestures come from the companion [trackpad-gestures](https://github.com/JoshCallis/trackpad-gestures) remapper.
+This is a working snapshot of a personal setup, not a packaged product. It needs yabai with its scripting addition, Accessibility permission for the helpers, and paths from the system it was built in. Keys and gestures come from the companion [trackpad-gestures](https://github.com/JoshCallis/Magic-Trackpad-Customisation) remapper.
